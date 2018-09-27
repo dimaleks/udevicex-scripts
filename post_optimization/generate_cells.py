@@ -3,6 +3,9 @@
 import argparse
 import numpy as np
 import sys
+import pickle
+import udevicex as udx
+from membrane_parameters import set_parameters, params2dict
 
 def gen_ic(domain, cell_volume, hematocrit, extent=(7,3,7)):
     assert(0.0 < hematocrit and hematocrit < 0.7)
@@ -27,31 +30,23 @@ def gen_ic(domain, cell_volume, hematocrit, extent=(7,3,7)):
     return real_ht, (nx, ny, nz), com_q
     
 
-def get_rbc_params(udx, lscale = 1.5):
+def get_rbc_params(udx, gamma_in, eta_in, rho):
     prms = udx.Interactions.MembraneParameters()
-    
-    p              = 0.000906667 * lscale
-    prms.x0        = 0.457    
-    prms.ka        = 4900.0
-    prms.kb        = 44.4444 * lscale**2
-    prms.kd        = 5000
-    prms.kv        = 7500.0
-    prms.gammaC    = 52.0 * lscale
-    prms.gammaT    = 0.0
-    prms.kbT       = 0.0444 * lscale**2
-    prms.mpow      = 2.0
-    prms.theta     = 6.97
-    prms.totArea   = 62.2242 * lscale**2
-    prms.totVolume = 26.6649 * lscale**3
-    prms.ks        = prms.kbT / p
-    prms.rnd       = False
+    set_parameters(prms, gamma_in, eta_in, rho)
 
     return prms
 
+class Viscosity_getter:
+    def __init__(self, folder, a, power):
+        self.s = pickle.load(open(folder + 'visc_' + str(a) + '_' + str(power) + '_backup.pckl', 'rb'))
+        
+    def predict(self, gamma):
+        return self.s(gamma)
+
 #====================================================================================
 #====================================================================================
     
-parser = argparse.ArgumentParser(description='Run the simulation')
+parser = argparse.ArgumentParser(description='Generate cells with given hematocrit')
 
 parser.add_argument('--debug-lvl', help='Debug level', type=int, default=3)
 parser.add_argument('--resource-folder', help='Path to all the required files', type=str, default='./')
@@ -61,6 +56,8 @@ parser.add_argument('--gamma', help='gamma', type=float, default=20.0)
 parser.add_argument('--kbt', help='kbt', type=float, default=1.5)
 parser.add_argument('--dt', help='Time step', type=float, default=0.001)
 parser.add_argument('--power', help='Kernel exponent', type=float, default=0.5)
+
+parser.add_argument('--lbd', help='RBC to plasma viscosity ratio', default=5.0, type=float)
 
 parser.add_argument('--final-time', help='Final time', type=float, default=20.0)
 
@@ -87,6 +84,12 @@ real_ht, ncells, rbcs_ic = gen_ic(domain, args.vol, args.ht)
 
 niters = int(args.final_time / args.dt)
 
+visc_getter = Viscosity_getter(args.resource_folder, args.a, args.power)
+mu_outer = visc_getter.predict(args.gamma)
+mu_inner = mu_outer * args.lbd
+params = get_rbc_params(udx, args.gamma * args.lbd, mu_inner, rho)
+params.gammaC = 2.0
+
 #====================================================================================
 #====================================================================================
 
@@ -96,6 +99,7 @@ def report():
         print('Some arguments are not recognized and will be ignored: ' + str(unknown))
     print('Domain size is: ' + str(domain))
     print('Generated %d cells %s, real hematocrit is %f' % (len(rbcs_ic), str(ncells), real_ht))
+    print('Cell parameters: %s' % str(params2dict(params)))
     print('')
     sys.stdout.flush()
 
@@ -104,7 +108,6 @@ if args.dry_run:
     report()
     quit()
 
-import udevicex as udx
 u = udx.udevicex(ranks, domain, debug_level=args.debug_lvl, log_filename='generate')
 
 if u.isMasterTask():
@@ -120,9 +123,8 @@ u.registerInteraction(dpd)
 #   Contact (LJ)
 contact = udx.Interactions.LJ('contact', rc=1.0, epsilon=10, sigma=1.0, object_aware=True, max_force=2000)
 u.registerInteraction(contact)
+
 #   Membrane
-params = get_rbc_params(udx)
-params.gammaT = 1.0
 membrane_int = udx.Interactions.MembraneForces('int_rbc', params, stressFree=False, grow_until=args.final_time*0.5)
 u.registerInteraction(membrane_int)
 

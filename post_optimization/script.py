@@ -5,7 +5,9 @@ import pickle
 import math
 from scipy.optimize import fsolve
 import sys
+import udevicex as udx
 
+from membrane_parameters import set_parameters, params2dict
 
 class Viscosity_getter:
     def __init__(self, folder, a, power):
@@ -14,24 +16,9 @@ class Viscosity_getter:
     def predict(self, gamma):
         return self.s(gamma)
 
-def get_rbc_params(udx, lscale = 1.5):
+def get_rbc_params(udx, gamma_in, eta_in, rho):
     prms = udx.Interactions.MembraneParameters()
-    
-    p              = 0.000906667 * lscale
-    prms.x0        = 0.457    
-    prms.ka        = 4900.0
-    prms.kb        = 44.4444 * lscale**2
-    prms.kd        = 5000
-    prms.kv        = 7500.0
-    prms.gammaC    = 52.0 * lscale
-    prms.gammaT    = 0.0
-    prms.kbT       = 0.0444 * lscale**2
-    prms.mpow      = 2.0
-    prms.theta     = 6.97
-    prms.totArea   = 62.2242 * lscale**2
-    prms.totVolume = 26.6649 * lscale**3
-    prms.ks        = prms.kbT / p
-    prms.rnd       = False
+    set_parameters(prms, gamma_in, eta_in, rho)
 
     return prms
 
@@ -92,6 +79,9 @@ args.inner_fsi_gamma = get_fsi_gamma(mu_inner, args.power)
 # just in case
 args.gamma = None
 
+# RBC parameters
+rbc_params = get_rbc_params(udx, args.inner_gamma, mu_inner, rho)
+
 #====================================================================================
 #====================================================================================
 
@@ -100,6 +90,8 @@ def report():
     if unknown is not None and len(unknown) > 0:
         print('Some arguments are not recognized and will be ignored: ' + str(unknown))
     print('Domain size is: ' + str(domain))
+    print('Outer viscosity: %f, inner: %f' % (mu_outer, mu_inner))
+    print('Cell parameters: %s' % str(params2dict(rbc_params)))
     print('')
     sys.stdout.flush()
 
@@ -108,7 +100,6 @@ if args.dry_run:
     report()
     quit()
 
-import udevicex as udx
 u = udx.udevicex(ranks, domain, debug_level=args.debug_lvl, log_filename='log')
 
 if u.isMasterTask():
@@ -130,7 +121,7 @@ u.registerInteraction(dpd)
 contact = udx.Interactions.LJ('contact', rc=1.0, epsilon=1.0, sigma=0.9, object_aware=True, max_force=750)
 u.registerInteraction(contact)
 #   Membrane
-membrane_int = udx.Interactions.MembraneForces('int_rbc', get_rbc_params(udx), stressFree=True)
+membrane_int = udx.Interactions.MembraneForces('int_rbc', rbc_params, stressFree=True)
 u.registerInteraction(membrane_int)
 
 # Integrator
@@ -204,17 +195,18 @@ u.setBouncer(bouncer, rbcs, outer)
 #====================================================================================
 #====================================================================================
 
-factor = 0.08
+factor = 0.05
 Kp = 2.0 * factor
 Ki = 1.0 * factor
-Kd = 8.0 * factor
+Kd = 10.0 * factor
 
 u.registerPlugins(udx.Plugins.createStats('stats', every=500, filename='stats.txt'))
 u.registerPlugins(udx.Plugins.createDumpObjectStats('obj', ov=rbcs, dump_every=200, path='pos/'))
 
 u.registerPlugins(udx.Plugins.createVelocityControl('vc', filename='vcont.txt',
                                                     pvs = [outer], low = (0, 0, 0), high = domain,
-                                                    sampleEvery = 5, dumpEvery = 500, targetVel = (args.vx, args.vy, 0),
+                                                    sample_every = 5, tune_every = 500, dump_every = 1000,
+                                                    target_vel = (args.vx, args.vy, 0),
                                                     Kp=Kp, Ki=Ki, Kd=Kd))
 
 if args.verbose:
