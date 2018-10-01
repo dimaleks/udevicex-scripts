@@ -7,7 +7,7 @@ import pickle
 import udevicex as udx
 from membrane_parameters import set_parameters, params2dict
 
-def gen_ic(domain, cell_volume, hematocrit, extent=(7,3,7)):
+def gen_ic(domain, cell_volume, hematocrit, extent=(7,7,3)):
     assert(0.0 < hematocrit and hematocrit < 0.7)
     
     norm_extent = np.array(extent) / ((extent[0]*extent[1]*extent[2])**(1/3.0))
@@ -25,7 +25,7 @@ def gen_ic(domain, cell_volume, hematocrit, extent=(7,3,7)):
     for i in range(nx):
         for j in range(ny):
             for k in range(nz):
-                com_q.append( [i*h[0], j*h[1], k*h[2],  1, 1, 0, 0] )
+                com_q.append( [i*h[0], j*h[1], k*h[2],  1, 0, 0, 0] )
                     
     return real_ht, (nx, ny, nz), com_q
     
@@ -38,7 +38,7 @@ def get_rbc_params(udx, gamma_in, eta_in, rho):
 
 class Viscosity_getter:
     def __init__(self, folder, a, power):
-        self.s = pickle.load(open(folder + 'visc_' + str(a) + '_' + str(power) + '_backup.pckl', 'rb'))
+        self.s = pickle.load(open(folder + 'visc_' + str(float(a)) + '_' + str(float(power)) + '_backup.pckl', 'rb'))
         
     def predict(self, gamma):
         return self.s(gamma)
@@ -51,11 +51,15 @@ parser = argparse.ArgumentParser(description='Generate cells with given hematocr
 parser.add_argument('--debug-lvl', help='Debug level', type=int, default=3)
 parser.add_argument('--resource-folder', help='Path to all the required files', type=str, default='./')
 
-parser.add_argument('--a', help='a', type=float, default=80.0)
-parser.add_argument('--gamma', help='gamma', type=float, default=20.0)
-parser.add_argument('--kbt', help='kbt', type=float, default=1.5)
-parser.add_argument('--dt', help='Time step', type=float, default=0.001)
-parser.add_argument('--power', help='Kernel exponent', type=float, default=0.5)
+parser.add_argument('--domain', help='Domain size', type=float, nargs=3, default=[64,64,64])
+parser.add_argument('--nranks', help='MPI ranks',   type=int,   nargs=3, default=[1,1,1])
+
+parser.add_argument('--rho', help='Particle density', type=float, default=8)
+parser.add_argument('--a', help='a', default=80, type=float)
+parser.add_argument('--gamma', help='gamma', default=20, type=float)
+parser.add_argument('--kbt', help='kbt', default=1.5, type=float)
+parser.add_argument('--dt', help='Time step', default=0.001, type=float)
+parser.add_argument('--power', help='Kernel exponent', default=0.5, type=float)
 
 parser.add_argument('--lbd', help='RBC to plasma viscosity ratio', default=5.0, type=float)
 
@@ -71,23 +75,14 @@ args, unknown = parser.parse_known_args()
 #====================================================================================
 #====================================================================================
 
-rho = 8.0
-ranks  = (1, 1, 1)
-
-sdf_file = 'sdf.dat'
-
-with open(sdf_file, 'r', encoding='latin-1') as sdf:
-    header = sdf.readline()
-    domain = tuple( [float(v) for v in header.split(' ')] )
-    
-real_ht, ncells, rbcs_ic = gen_ic(domain, args.vol, args.ht)
+real_ht, ncells, rbcs_ic = gen_ic(args.domain, args.vol, args.ht)
 
 niters = int(args.final_time / args.dt)
 
 visc_getter = Viscosity_getter(args.resource_folder, args.a, args.power)
 mu_outer = visc_getter.predict(args.gamma)
 mu_inner = mu_outer * args.lbd
-params = get_rbc_params(udx, args.gamma * args.lbd, mu_inner, rho)
+params = get_rbc_params(udx, args.gamma * args.lbd, mu_inner, args.rho)
 params.gammaC = 2.0
 
 #====================================================================================
@@ -97,7 +92,6 @@ def report():
     print('Started with the following parameters: ' + str(args))
     if unknown is not None and len(unknown) > 0:
         print('Some arguments are not recognized and will be ignored: ' + str(unknown))
-    print('Domain size is: ' + str(domain))
     print('Outer viscosity: %f, inner: %f' % (mu_outer, mu_inner))
     print('Generated %d cells %s, real hematocrit is %f' % (len(rbcs_ic), str(ncells), real_ht))
     print('Cell parameters: %s' % str(params2dict(params)))
@@ -109,7 +103,7 @@ if args.dry_run:
     report()
     quit()
 
-u = udx.udevicex(ranks, domain, debug_level=args.debug_lvl, log_filename='generate')
+u = udx.udevicex(args.nranks, args.domain, debug_level=args.debug_lvl, log_filename='generate')
 
 if u.isMasterTask():
     report()
@@ -133,15 +127,10 @@ u.registerInteraction(membrane_int)
 vv = udx.Integrators.VelocityVerlet('vv', args.dt)
 u.registerIntegrator(vv)
 
-# Wall
-post = udx.Walls.SDF('post', sdf_file)
-u.registerWall(post)
-
 # RBCs
 mesh_rbc = udx.ParticleVectors.MembraneMesh(args.resource_folder + 'rbc_mesh.off')
 rbcs = udx.ParticleVectors.MembraneVector('rbc', mass=1.0, mesh=mesh_rbc)
 u.registerParticleVector(pv=rbcs, ic=udx.InitialConditions.Membrane(rbcs_ic, global_scale=0.5), checkpoint_every = niters-5)
-
 
 # Stitching things with each other
 #   contact
@@ -149,19 +138,13 @@ u.setInteraction(contact, rbcs, rbcs)
 #   membrane
 u.setInteraction(membrane_int, rbcs, rbcs)
 
-
 # Integration
 u.setIntegrator(vv, rbcs)
 
-
-# Wall bounce and repulsion
-u.registerPlugins( udx.Plugins.createWallRepulsion('repulsion', rbcs, post, C=args.a*4, h=0.4, max_force=args.a*5) )
-
-
 #====================================================================================
 #====================================================================================
 
-u.registerPlugins(udx.Plugins.createStats('stats', every=5000))
+u.registerPlugins(udx.Plugins.createStats('stats', every=1000))
 
 
 u.run(niters)
