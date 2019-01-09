@@ -11,11 +11,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 import math
 import subprocess
+import thesis_plot as myplt
+
 
 
 def coefficient(frc, rho, u, r, R):
     #return 0.25 * frc / (rho * u**2 * r**4 / R**2)
-    return frc / ( rho * u**2 * (2*r)**2 )
+    return frc / ( rho * u**2 * (2*r)**4 / ((2*R)**2))
 
 def mean_err_cut(vals):
     npvals = np.array(vals[20:]).astype(np.float)
@@ -27,27 +29,23 @@ def mean_err_cut(vals):
 
 def dump_plots(positions, alldata, r1, r2):
     
-    plt.plot(r1[:,0], r1[:,1], "o", ms=6, markeredgewidth=1.5, markeredgecolor='black', label="Nakagawa et al., J. Fluid Mech (2015)")
-    plt.plot(r2[:,0], r2[:,1], "s", ms=6, markeredgewidth=1.5, markeredgecolor='black', label="Di Carlo et al., Phys Rev Lett (2009)")
+    plt.plot(r1[:,0], r1[:,1], "o", color="C0", zorder=2, markeredgewidth=0.75, markeredgecolor='black', ms=3, label="Nakagawa et al., J. Fluid Mech (2015)")
+    plt.plot(r2[:,0], r2[:,1], "s", color="C1", zorder=2, markeredgewidth=0.75, markeredgecolor='black', ms=3, label="Di Carlo et al., Phys Rev Lett (2009)")
         
     for data, err, label, fmt in alldata:
-        plt.errorbar(positions, data, yerr=err, markeredgewidth=1.5, markeredgecolor='black', fmt=fmt, ms=10, linewidth=2, label=label)
+        plt.errorbar(positions, data, yerr=err, color="C2", zorder=3, markeredgewidth=0.75, markeredgecolor='black', ms=3, fmt=fmt, label=label)
 
-    plt.xlabel('y/R', fontsize=16)
-    plt.ylabel('Cl', fontsize=16)
+    plt.xlabel(r'$y/R$')
+    plt.ylabel(r'$C_l$')
     plt.grid()
-    plt.legend(fontsize=14)
+    #plt.legend(fontsize=14)
 
-    plt.rc('xtick', labelsize=14)
-    plt.rc('ytick', labelsize=14)
-
-    plt.tight_layout()
-    plt.show()
+    myplt.set_font_sizes(plt.gca())
 #    figpath = "%s/profiles.png" % (resdir)
 #    plt.savefig(figpath, bbox_inches='tight')
 #    plt.close(fig)
 
-## ratio = 0.166
+kappa = 0.22
 nakagawa = np.array([
 0, 0.00032573289902280284,
 0.04, 0.005618892508143333,
@@ -69,6 +67,7 @@ nakagawa = np.array([
 0.68, -0.062377850162866455,
 0.72, -0.10171009771986969
 ]).reshape([-1, 2])
+nakagawa[:,1] /= kappa ** 2
     
 dicarlo = np.array([
 0.72, -0.3841135334839302,
@@ -91,6 +90,8 @@ dicarlo = np.array([
 0.04, 0.026415303060587036,
 -0, 0.005621740261797292        
 ]).reshape([-1, 2])
+dicarlo[:,1] /= kappa ** 2
+
     
 cubism4 = np.array([
 0.1, 1.09349e-06,
@@ -162,7 +163,7 @@ def get_forces(case, U):
         my *= np.sqrt(2)
         
         Cls.append(coefficient(my, rho, U, r, R))
-        err_Cls.append(coefficient(3.0*math.sqrt(vy), rho, U, r, R))
+        err_Cls.append(coefficient(5.0*math.sqrt(vy), rho, U, r, R))
         
     return Cls, err_Cls
 
@@ -204,23 +205,25 @@ def get_forces_cubism(case):
     return Cls, err_Cls
 
 alldata = []
-#alldata.append( get_forces("/home/alexeedm/extern/daint/scratch/focusing_square/case_5_0.08__80_20_1.5__") + ("Present", "o") )
-#alldata.append( get_forces("/home/alexeedm/extern/daint/scratch/focusing_square/case_5_0.0788__160_20_3.0__", 2.3) + ("Present", "D") ) # 2244!
+#alldata.append( get_forces("/home/alexeedm/extern/daint/project/alexeedm/focusing_square/case_5_0.08__80_20_1.5__") + ("Present", "o") )
+alldata.append( get_forces("/home/alexeedm/extern/daint/project/alexeedm/focusing_square/case_5_0.0788__160_20_3.0__", 2.3) + ("Present", "D") ) # 2244!
 #alldata.append( get_forces_cubism("/home/alexeedm/extern/daint/scratch/cubism-square-lift-2d/case_4_0_") + ("Present", "o") )
 #alldata.append( get_forces_cubism("/home/alexeedm/extern/daint/scratch/cubism-square-lift-2d/case_4_0_") + ("Present", "o") )
-alldata.append( get_forces_cubism("/home/alexeedm/extern/daint/scratch/cubism-square-lift-2d/case_yetwider_8_0_") + ("Present", "o") )
-#alldata.append( get_forces("/home/alexeedm/extern/daint/scratch/focusing_square/case_5_0.02144__80_10_1.5__", 1.1704) + ("Present", "o") )
+#alldata.append( get_forces_cubism("/home/alexeedm/extern/daint/project/alexeedm/cubism-square-lift-2d/case_yetwider_8_0_") + ("Present", "o") )
+#alldata.append( get_forces("/home/alexeedm/extern/daint/project/alexeedm/focusing_square/case_5_0.02144__80_10_1.5__", 1.1704) + ("Present", "o") )
 
 print(alldata)
 #print Cls
 #print err_Cls
 
+myplt.set_pgf_backend()
 fig = plt.figure()
-#positions = np.linspace(0.0, 0.72, 19)
-positions = np.arange(0.0, 0.8, 0.1)
+positions = np.linspace(0.0, 0.72, 19)
+#positions = np.arange(0.0, 0.8, 0.1)
 
 dump_plots(positions, alldata, nakagawa, dicarlo)
-fig.savefig("/home/alexeedm/udevicex/media/duct_lift_coefficients.pdf", bbox_inches='tight')
+myplt.save_figure(fig, 3, 'duct_lift_coefficients.pdf')
+plt.close()
 
 
 

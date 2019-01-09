@@ -55,7 +55,7 @@ def couette_profile(fname, hbin, r, R, h2, center2):
 		it.iternext()
 		it.iternext()
 	
-	print vel / count
+	print(vel / count)
 	
 	return vel / count
 

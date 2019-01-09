@@ -90,7 +90,7 @@ def mean_err_cut(vals):
     npvals = np.array(vals[20:]).astype(np.float)
     
     m = np.mean(npvals)
-    v = np.sqrt( np.var(npvals) / npvals.size )
+    v = np.var(npvals) / npvals.size
         
     return m,v
 
@@ -106,8 +106,8 @@ def read_one(fnames, columns):
         for l in lines:
             try:
                 t = float( l.split()[1] )
-                ##if t > 100.0:
-                val += [ l.split()[c] ]
+                if t > 1000.0:
+                    val += [ l.split()[c] ]
             except:
                 print('Reading error!!!')
                 continue
@@ -115,9 +115,6 @@ def read_one(fnames, columns):
         (mean, err) = mean_err_cut(val)
         resv += [mean]
         reserr += [err]
-        
-        if np.isnan(mean):
-            print(val)
     
     return resv + reserr
 
@@ -183,10 +180,8 @@ def symmetry_1d(alldata, ry, rz, values):
 
     return alldata
     
-def _read_data(prefix, fname, columns, process, mirror, _1d):
+def _read_data(prefix, fname, columns, process):
     cases = sorted(glob.glob(prefix))
-        
-    print(prefix)
     
     rho = 8
     r = 5
@@ -203,50 +198,43 @@ def _read_data(prefix, fname, columns, process, mirror, _1d):
         print(lastdir)
         
         raw = read_one( sorted(glob.glob(case + '/' + fname + '/*.txt')), columns )
-        m = re.search(r'case_(.*?)_(.*?)_(.*?)_.*?__(.*?)_(.*?)_.*?__(.*?)x(.*)', lastdir)
-        if m is not None:
-            f, lbd, Y, a, gamma, ry, rz = [ float(v) for v in m.groups() ]
-        else:
-            m = re.search(r'case_(.*?)_(.*?)_.*?__(.*?)_(.*?)_.*?__(.*?)x(.*)', lastdir)
-            if m is not None:
-                f, rot, a, gamma, ry, rz = [ float(v) for v in m.groups() ]
-            else:
-                f, rot, a, gamma, ry, rz = [ float( re.search('_' + nm + r'_([^_]+)', lastdir).group(1) )
-                                            for nm in ['f', 'rotation', 'a', 'gamma', 'ry', 'rz'] ]
-                
-        if ry > 0.7 or rz > 0.7:
-            continue
+
+        f, a, gamma, ry, rz = [ float( re.search('_' + nm + r'_([^_]+)', lastdir).group(1) )
+                                    for nm in ['f', 'a', 'gamma', 'ry', 'rz'] ]
+
         
         s = pickle.load( open('data/viscosity/visc_' + str(a) + '_0.5_backup.pckl', 'rb') )
         mu = s(gamma)
         
         u = 0.3514425374e-1 * H**2 * rho*f / mu
-        #print(u)
                 
         values = process(raw, ry*H/2, (1+rz)*H/2,  rho, u, r, H, f, mu)
                 
         # in case of NaNs set the error to something big
         if np.isnan(values[0]) or np.isnan(values[1]):
             print("NaNs found in this case")
-            print(raw)
             continue
         
-        if _1d:
-            alldata = symmetry_1d(alldata, ry, rz, values)
-        else:
-            alldata = symmetry_2d(alldata, ry, rz, values, mirror)
-            
+        if -0.7 < ry and ry < 0.7  and  -0.7 < rz and rz < 0.7:
+            entry = np.hstack(([ry, rz], values))
+            if alldata is None:
+                alldata = entry
+            else:
+                alldata = np.vstack( (alldata, entry) )     
+
+            alldata = np.vstack( (alldata, [-ry, rz, -values[0], values[1], values[2], values[3]]) )            
+
     
     return np.array(alldata)
     
 def read_force_data(prefix):
-    return  _read_data(prefix, 'pinning_force', [3, 4], process_force, True, False)
+    return  _read_data(prefix, 'pinning_force', [3, 4], process_force)
 
 def read_rotation_data(prefix):
-    return  _read_data(prefix, 'pos', [13, 14], process_rotation, False, False)
+    return  _read_data(prefix, 'pos', [13, 14], process_rotation)
 
 def read_velocity_data(prefix):
-    return  _read_data(prefix, 'pos', [9], process_velocity, False, True)
+    return  _read_data(prefix, 'pos', [9], process_velocity)
 
 
 def val_along_curve(gpY, gpZ, coo, normal=True):
@@ -281,13 +269,10 @@ def val_along_curve(gpY, gpZ, coo, normal=True):
 def fit_gaussian(x, y, err):
     
 #    kernel = kr.RBF(length_scale=10.0)
-    #kernel = kr.ConstantKernel(1) * kr.Matern(length_scale=0.3, nu=2.5)
-#    kernel = kr.Matern(length_scale=0.3, nu=2.5)
-    kernel = kr.RBF(length_scale=0.3)
-    gp = GaussianProcessRegressor(kernel=kernel, alpha=err**2, n_restarts_optimizer=10)
+    kernel = kr.Matern(length_scale=0.4, nu=2.0)
+    gp = GaussianProcessRegressor(kernel=kernel, alpha=err**2, n_restarts_optimizer=5)
     
     gp.fit(x, y)
-    print(gp.kernel_)
     
     return gp
 
@@ -318,7 +303,7 @@ def draw_quiver(data):
     sm.set_array([])
     
     #plt.colorbar(sm)
-    plt.quiver(ry, rz, Fy, Fz, color=cm(norm(lengths)), width=0.006, headwidth=4, scale=20)
+    plt.quiver(ry, rz, Fy, Fz, color=cm(norm(lengths)), headwidth=4)
 #    plt.quiver(ry, rz, _Fy, _Fz, minlength=0)#, scale=1000, width=0.004)
     
     return norm, cm
@@ -440,8 +425,6 @@ def mindist(targets, pt):
     dist = 1000.0;
     for t in targets:
         dist = min(np.linalg.norm(t - pt), dist)
-        dist = min(np.linalg.norm(t*np.array([1.0, -1.0]) - pt), dist)
-        dist = min(np.linalg.norm(np.array([t[1], t[0]]) - pt), dist)
         
     return dist
 
@@ -451,23 +434,17 @@ def separatrix_cloud(gpY, gpZ):
     
     print("Looking for critical points")
     
-    raw = np.array( find_equilibria(gpY, gpZ, np.array([-0.1, -0.1]), np.array([0.7, 0.7]), 1e-4) )
+    raw = np.array( find_equilibria(gpY, gpZ, np.array([-0.7, -0.7]), np.array([0.7, 0.7]), 1e-4) )
         
-    # do a correction
-    multiple = raw[ (raw[:,0] - raw[:,1] > -0.1) ]
+    # do a correction    
+    raw = raw[ raw[:,0].argsort(), : ]    
 
-    for i in range(multiple.shape[0]):
-        multiple[i,:] = [ np.max(multiple[i,:]), np.min(multiple[i,:]) ]
-            
-    multiple = multiple[ ((multiple[:,0] > 0.1) | (multiple[:,0] > 0.1)) ]
-    multiple = multiple[ multiple[:,0].argsort(), : ]    
-    
-    equilibria = np.array(multiple[0])
-    for i in range(1, multiple.shape[0]):
-        diff = np.linalg.norm(multiple[i] - multiple[i-1])
+    equilibria = np.array(raw[0])
+    for i in range(1, raw.shape[0]):
+        diff = np.linalg.norm(raw[i] - raw[i-1])
         
         if diff > r:
-            equilibria = np.vstack((equilibria, multiple[i]))
+            equilibria = np.vstack((equilibria, raw[i]))
     
     print("Equilibrium points identified:")
     print(equilibria)
@@ -475,7 +452,12 @@ def separatrix_cloud(gpY, gpZ):
     points = np.empty((2, 0))
     
 
-    for eq in equilibria:
+    for eq in np.atleast_2d(equilibria):
+        
+        if (np.linalg.norm(eq) < 0.35):
+            print("Probably center, not shooting: ", eq)
+            continue
+        
         print("Shooting from point ", eq)
         for phi in np.linspace(0, 2*np.pi, 10):
             print("    phi = ", phi)
@@ -498,13 +480,24 @@ def separatrix_cloud(gpY, gpZ):
     return np.atleast_2d(equilibria), np.atleast_2d(points)
 
 def separatrix(points, resolution):
+
+    points = points[ :, np.arctan2(points[1, :], points[0, :]).argsort() ]    
+
     
-    phi = np.arctan2(points[1, :], points[0, :])    
+    n = 10
+    ext_points = np.hstack((points[:, -n:], points, points[:, :n]))
     
-    sx = scinterp.Rbf(phi, points[0], smooth=200.0)
-    sy = scinterp.Rbf(phi, points[1], smooth=200.0)
+    phi = np.arctan2(ext_points[1, :], ext_points[0, :])   
+
+    phi[:n] -= 2*np.pi
+    phi[-n:] += 2*np.pi    
     
-    x = np.linspace(0, np.pi / 4.0, resolution)
+    sx = scinterp.Rbf(phi, ext_points[0], smooth=200.0)
+    sy = scinterp.Rbf(phi, ext_points[1], smooth=200.0)
+    
+    h = 2*np.pi / resolution
+    x = np.linspace(-np.pi+h/2, np.pi+h/2, resolution)
+    x[x > np.pi] -= 2*np.pi
     sep = np.vstack( (sx(x), sy(x)) ).T
     
     lengths = np.empty(sep.shape[0])
@@ -517,26 +510,19 @@ def separatrix(points, resolution):
 def draw_value_along_curve(t, f, sigma, limits, fname, title, save):
     
     fig = plt.figure()
-    plt.plot(t / np.max(t), f, color='black')
-    plt.fill_between(t / np.max(t), f - sigma, f + sigma, color='red', alpha=0.5, linewidth=0)
-    #plt.title(title)
+    plt.plot(t, f)
+    plt.fill_between(t, f - sigma, f + sigma, color='red', alpha=0.5, linewidth=0)
+    plt.title(title)
     
     plt.axes().set_ylim(limits)
     
-    plt.ylabel(r'$C_l^{||}$')
-    plt.xlabel(r'$t$')
-    
-    myplt.set_font_sizes(plt.gca())
-    myplt.make_grid(plt.gca())
-    
     if save:
-        myplt.save_figure(fig, 3.5, fname)
-        #fig.savefig(fname, bbox_inches='tight')
+        fig.savefig(fname, bbox_inches='tight')
         plt.close(fig)
     else:
         plt.show()
-    
-def draw_cross_section(alldata, gpY, gpZ, sep, equilibria, points, title, fname, save, rotation=True):
+
+def draw_cross_section(alldata, gpY, gpZ, sep, equilibria, points, title, fname, save):
     
     fig = plt.figure()
 
@@ -545,25 +531,25 @@ def draw_cross_section(alldata, gpY, gpZ, sep, equilibria, points, title, fname,
     plt.ylabel('$z / (H/2)$')
     myplt.set_font_sizes(plt.gca())
 
-    plt.axes().set_xlim([-0.02, 0.72])
-    plt.axes().set_ylim([-0.02, 0.72])
+    plt.axes().set_xlim([-0.72, 0.72])
+    plt.axes().set_ylim([-0.72, 0.72])
 
     plt.axes().set_aspect('equal', 'box', anchor='SW')
     
     
     norm, cmap = draw_quiver(alldata)
     
-    x = np.linspace(0, 0.7, 40)
-    y = np.linspace(0, 0.7, 40)
+    x = np.linspace(-0.7, 0.7, 40)
+    y = np.linspace(-0.7, 0.7, 40)
     X,Y = np.meshgrid(x,y)
     grid = np.array([X.flatten(),Y.flatten()]).T
     #draw_gp(grid, gpY, gpZ, norm, cmap)
     
     plt.plot( sep[:, 0], sep[:, 1], color='grey', linewidth=2 )
     
-    if rotation:
-        plt.scatter( sep[:,0][0], sep[:,1][0], color='C3', linewidth=1.5, s=25.0, zorder=5)
-        plt.scatter( sep[:,0][-1], sep[:,1][-1], facecolors='none', edgecolors='C3', linewidth=1.5, s=25.0, zorder=5)
+    #if rotation:
+    plt.scatter( equilibria[:,0][0], equilibria[:,1][0], color='C3', linewidth=1.5, s=25.0, zorder=5)
+    plt.scatter( equilibria[:,0][1], equilibria[:,1][1], facecolors='none', edgecolors='C3', linewidth=1.5, s=25.0, zorder=5)
 #    plt.scatter( points[0,:], points[1,:], color='C3', s=5.0, zorder=5)
     
     if save:
@@ -574,7 +560,41 @@ def draw_cross_section(alldata, gpY, gpZ, sep, equilibria, points, title, fname,
         plt.show()
     
     return fig
-    
+
+#def draw_cross_section(alldata, gpY, gpZ, sep, equilibria, points, title, fname, save):
+#    
+#    fig = plt.figure()
+#
+#    plt.title(title)
+#    plt.xlabel('y', fontsize=16)
+#    plt.ylabel('z', fontsize=16)
+#
+#    plt.axes().set_xlim([-0.72, 0.72])
+#    plt.axes().set_ylim([-0.72, 0.72])
+#
+#    plt.axes().set_aspect('equal', 'box', anchor='SW')
+#    
+#    
+#    norm, cmap = draw_quiver(alldata)
+#    
+#    x = np.linspace(-0.7, 0.7, 40)
+#    y = np.linspace(-0.7, 0.7, 40)
+#    X,Y = np.meshgrid(x,y)
+#    grid = np.array([X.flatten(),Y.flatten()]).T
+##    draw_gp(grid, gpY, gpZ, norm, cmap)
+#    
+#    plt.plot( sep[:, 0], sep[:, 1], color='C2', linewidth=3.0 )
+##    plt.scatter( equilibria[:,0], equilibria[:,1], color='C3', s=50.0, zorder=5)
+##    plt.scatter( points[0,:], points[1,:], color='C3', s=5.0, zorder=5)
+#    
+#    if save:
+#        fig.savefig(fname, bbox_inches='tight')
+#        plt.close(fig)
+#    else:
+#        plt.show()
+#    
+#    return fig
+#    
 def read_cache(func, folder, fname, override_cache=False):
     try:
         res = pickle.load(open(folder + fname + '.pckl', 'rb'))
@@ -591,169 +611,69 @@ def read_cache(func, folder, fname, override_cache=False):
     return res
 
 #%%
-    
+
 override_cache = False
 generate = False
-save_refine = False
 save_figures = True
 
-pickle_folder = 'data/focusing/'
+pickle_folder = 'data/focusing/torque/'
 figure_folder = 'square/'
 
-#if save_figures:
-#    myplt.set_pgf_backend()
-#else:
-myplt.set_qt_backend()
-    
-kappa = 0.22
-
-fint = None
-for Re in [50, 100, 200]:
-    for lbd in [1.0, 5.0, 25.0]:
-        for Ca in [1.0, 0.1, 0.01]:
-                                    
-            folder = '/home/alexeedm/extern/daint/project/alexeedm/focusing_square_massive/casenew_' + str(int(Re)) + '_' + str(kappa) + '/'
-            case = 'case_*_' + str(lbd) + '_' + str(Ca) + '_' + str(kappa) + '__160_*_3.0__*'
-            
-            fname = 'Re_' + str(Re) + '_kappa_' + str(kappa) + '__lambda_' + str(lbd) + '_Ca_' + str(Ca)
-            title = r'$Re = ' + str(Re) + r',\kappa = ' + str(kappa) + r', \lambda = ' + str(lbd) + r', Ca = ' + str(Ca) + r'$'
-            
-
-            print('Reading force values')
-            force_data    = read_cache( lambda : read_force_data(folder + case),  pickle_folder, 'forcedata_' + fname, override_cache)
-                
-            #%%
-            print('Fitting forces')
-            fy, fz = read_cache( lambda : gaussian_fit2d(force_data), pickle_folder, 'force_'+fname, generate )
-            
-            print('Finding separatrix')
-            equilibria, points = read_cache( lambda : separatrix_cloud(fy, fz), pickle_folder, 'equilibria_'+fname, generate )
-            t, sep = read_cache( lambda : separatrix(points, 106), pickle_folder, 'separatrix_'+fname, generate )
-    
-    #%%
-            if Re == 50:
-                flimits = [-0.05, 0.02]
-                wlimits = [-0.05, 0.5]
-                ulimits = [-0.9, -0.75]
-            if Re == 100:
-                flimits = [-0.08, 0.02]
-            if Re == 200:
-                flimits = [-0.1, 0.02]
-                wlimits = [-0.05, 1.0]
-                ulimits = [-3.75, -1.5]
-    
-                        
-            f, fsigma = val_along_curve(fy, fz, sep)
-            
-            if fint is None:
-                fint = [[Re, lbd, Ca, scintegr.trapz(f, sep[:,1]), scintegr.trapz(f+fsigma, sep[:,1]), scintegr.trapz(f-fsigma, sep[:,1]) ], ]
-            else:
-                fint.append([Re, lbd, Ca, scintegr.trapz(f, sep[:,1]), scintegr.trapz(f+fsigma, sep[:,1]), scintegr.trapz(f-fsigma, sep[:,1]) ]) 
-           
-            
-            #draw_value_along_curve(sep[:,1], f, fsigma, flimits, figure_folder + 'force_' + fname + '.pdf', title, save_figures)
-            #fig = draw_cross_section(force_data, fy, fz, sep, equilibria, points, title,
-            #                         figure_folder + 'cross_' + fname + '.pdf', save_figures)
-            
-            #u = alsdjflaks
-            
-##%%
-#            normals = curve_normal(sep)
-#            
-#            if Re == 50 or Re == 100:
-#                every = 15
-#            if Re == 200:
-#                every = 21
-#                
-#            coarse_orbit   = sep    [::every]
-#            coarse_normals = normals[::every]
-#                
-#            h = 0.02
-#            refname = folder+case+'refine.txt'
-#            refname = re.sub(r'\*', 'XXX', fname)
-#            f = open(refname, 'w')
-#            for p in np.linspace(-h, h, 4):
-#                coo = coarse_orbit + coarse_normals*p
-#                plt.scatter( coo[:,0], coo[:,1], color='black' )
-#                
-#                for c in coo:
-#                    f.write('%f  %f\n' % (c[0], c[1]))
-#            
-#            f.close()
-#        
-#            fig.savefig('/home/alexeedm/udevicex/media/square/' + 'refine__' + fname + '.pdf', bbox_inches='tight')
-#            plt.close(fig)
-    
-#            plt.show()
-#        
-#                    
-#            plt.plot(sep[:,0], sep[:,1])
-#            plt.quiver(sep[:,0], sep[:,1], normals[:,0], normals[:,1])
-#            plt.show()            
-
-print(fint)
-pickle.dump(fint, open(pickle_folder + 'energies_soft_square.pckl', 'wb'))
-
-a = kdjsfhakjdh
-#%%
-
+torques = {50 : 4000, 100 : 3000, 200 : 2000}
 
 kappa = 0.22
 for Re in [50, 100, 200]:
-    for rot in [0, 1]:
+    for trq in [torques[Re], 2*torques[Re]]:
         
-                
-#        if rot == 1:
+        Re = 100
+        trq = 3000
+        
+        print("Re %f, torque %f" % (Re, trq))
+        
+#        if Re == 50:
+#            continue
+#        
+#        if Re == 100 and trq == 3000:
 #            continue
                 
 #%%
-        root_scratch     = '/home/alexeedm/extern/daint/scratch/focusing_square_rigid_massive/'
-        root_scratch1600 = '/home/alexeedm/extern/daint/scratch1600/focusing_square_rigid_massive/'
-        root_project = '/home/alexeedm/extern/daint/project/alexeedm/focusing_square_rigid_massive/'
-        folder = 'case_' + str(int(Re)) + '_' + str(kappa) + '/'
-        case = 'case_*_' + str(rot) + '_' + str(kappa) + '__160_*_3.0__*'
+        root_scratch1600 = '/home/alexeedm/extern/daint/scratch1600/focusing_square_rigid_massive/extra_torque/'
+        root_project = '/home/alexeedm/extern/daint/project/alexeedm/focusing_square_rigid_massive/extra_torque/'
+                
+        folder = 'case_*___Re_' + str(int(Re)) + '__kappa_' + str(kappa) + '*' + '__ty_' + str(float(trq)) + '*'
+
+        fname = 'Re_' + str(Re) + '_kappa_' + str(kappa) + '__torque_' + str(trq)
         
-        newfolder = '/newcode/case___Re_' + str(int(Re)) + '__kappa_' + str(kappa) + '*' + '_rotation_' + str(int(rot)) + '*'
+        title = r'$Re = ' + str(Re) + r',\kappa = ' + str(kappa) + r'$,  $T^{extra}_z = ' + str(float(trq)) + '$'
 
         
-        fname = 'Re_' + str(Re) + '_kappa_' + str(kappa) + '__rotation_' + str(rot)
-        
-        if rot == 1:
-            title = r'$Re = ' + str(Re) + r',\kappa = ' + str(kappa) + r'$, inhibited rotation'
-        else:
-            title = r'$Re = ' + str(Re) + r',\kappa = ' + str(kappa) + r'$, free rotation'
-            
-        
-        def read_old_new(func):
-            return np.vstack( (func(root_project + folder+case), func(root_scratch + newfolder)) )
-        
         print('Reading force values')
-        force_data    = read_cache( lambda : read_old_new(read_force_data),
+        force_data    = read_cache( lambda : read_force_data(root_scratch1600 + folder),
                                    pickle_folder, 'forcedata_' + fname, override_cache)
             
-        print('Reading rotation values')
-        rotation_data = read_cache( lambda : read_old_new(read_rotation_data),
-                                   pickle_folder, 'rotationdata_' + fname, override_cache)   
-    
-        print('Reading velocity values')
-        velocity_data = read_cache( lambda : read_old_new(read_velocity_data),
-                                   pickle_folder, 'velocitydata_' + fname, override_cache)   
+#        print('Reading rotation values')
+#        rotation_data = read_cache( lambda : read_rotation_data(root_scratch1600 + folder),
+#                                   pickle_folder, 'rotationdata_' + fname, override_cache)   
+#    
+#        print('Reading velocity values')
+#        velocity_data = read_cache( lambda : read_old_new(read_velocity_data),
+#                                   pickle_folder, 'velocitydata_' + fname, override_cache)   
             
         #%%
         print('Fitting forces')
         fy, fz = read_cache( lambda : gaussian_fit2d(force_data), pickle_folder, 'force_'+fname, generate )
-
-        print('Fitting rotations')
-        rotation_data[:, 4:] *= 10000
-        omegay, omegaz = read_cache( lambda : gaussian_fit2d(rotation_data), pickle_folder, 'omega_'+fname, generate )
-    
-        print('Fitting slip velocity')
-        slip = read_cache( lambda : fit_gaussian(velocity_data[:,0:2], velocity_data[:,2], 1e4*velocity_data[:,3]),
-                           pickle_folder, 'slip_'+fname, generate )
+#
+#        print('Fitting rotations')
+#        rotation_data[:, 4:] *= 10000
+#        omegay, omegaz = read_cache( lambda : gaussian_fit2d(rotation_data), pickle_folder, 'omega_'+fname, generate )
+#    
+#        print('Fitting slip velocity')
+#        slip = read_cache( lambda : fit_gaussian(velocity_data[:,0:2], velocity_data[:,2], 1e4*velocity_data[:,3]),
+#                           pickle_folder, 'slip_'+fname, generate )
         
         print('Finding separatrix')
         equilibria, points = read_cache( lambda : separatrix_cloud(fy, fz), pickle_folder, 'equilibria_'+fname, generate )
-        t, sep = read_cache( lambda : separatrix(points, 106), pickle_folder, 'separatrix_'+fname, generate )
+        t, sep = read_cache( lambda : separatrix(points, 300), pickle_folder, 'separatrix_'+fname, generate )
 
 #%%
         if Re == 50:
@@ -769,52 +689,20 @@ for Re in [50, 100, 200]:
 
                     
         f, fsigma = val_along_curve(fy, fz, sep)
-        w, wsigma = val_along_curve(omegay, omegaz, sep, normal=False)
-        u, usigma = slip.predict(np.atleast_2d(sep), return_std=True)
+#        w, wsigma = val_along_curve(omegay, omegaz, sep, normal=False)
+#        u, usigma = slip.predict(np.atleast_2d(sep), return_std=True)
        
         
-        draw_value_along_curve(sep[:,1], f, fsigma, flimits, figure_folder + 'force_' + fname + '.pdf', title, save_figures)
+#        draw_value_along_curve(sep[:,1], f, fsigma, flimits, figure_folder + 'force_' + fname + '.pdf', title, save_figures)
 #        draw_value_along_curve(t, w, wsigma, wlimits, figure_folder + 'omega_' + fname + '.pdf', title, save_figures)
 #        draw_value_along_curve(t, u, usigma, ulimits, figure_folder + 'slip_'  + fname + '.pdf', title, save_figures)
       
 #%%
-        r = 5
-        H = 2*r / kappa
-#        fig = plt.figure()
-#        
-#        cl = f
-#        
-#        def norm(x):
-#            return np.abs(x) / np.max(np.abs(x))
-##        plt.plot(t, np.abs(f) / np.max(np.abs(f)))
-##        plt.plot(t, np.abs(w) / np.max(np.abs(w)))
-##        plt.plot(t, np.abs(u) / np.max(np.abs(u)))
-#        
-        #plt.plot(t, f / w / u)
-#        
-#        plt.plot(t, norm(f / (u)**2))
-#        plt.plot(t, norm(f))
-#        plt.plot(t, norm(w / u))
-#        plt.title(title)
-        
-        sigma = np.abs(fsigma/w / (u))
-#        plt.fill_between(-u, cl - sigma, cl + sigma, color='red', alpha=0.5, linewidth=0)
-#        plt.title(title)
-#        plt.ylim([-0.05, 0.25])
-        
-        #plt.show()
-        #%%
                    
         fig = draw_cross_section(force_data, fy, fz, sep, equilibria, points, title,
-                                 figure_folder + 'cross_' + fname + '.pdf', save_figures,
-                                 True if rot==0 else False)
+                                 figure_folder + 'extratorque_' + fname + '.pdf', save_figures)
         
-#        print(sep[-1])
-#        refname = root_scratch1600 + '/newcode/' + 'free_' + str(int(Re)) + '_' + str(int(rot)) + '.txt'
-#        f = open(refname, 'w')
-#        for i in range(5):
-#            f.write('%f  %f    %f  %f\n' % (sep[-1,0], sep[-1,1], 0,0))
-#        f.close()
+        u = adsfasdfadfsj
 #        
 #        fig = draw_cross_section(rotation_data, omegay, omegaz, sep, equilibria, points, title,
 #                         figure_folder + 'vprofile_' + fname + '.pdf', save_figures)
@@ -826,61 +714,7 @@ for Re in [50, 100, 200]:
 #        velocity_data[:, 2:] /= (rho * 2*r / mu)
 #        fig = draw_cross_section( np.hstack( (velocity_data, zeros) ), slip, slip, sep, equilibria, points, title, 
 #                                 figure_folder + 'velocity_' + fname + '.pdf', save_figures)
-        
-##%%
-        normals = curve_normal(sep)
-        
-        #a = dafdfa
-        
-        if save_refine:
-            
-            r = 5.0
-            H = 2*r/kappa
-            u = 3.5
-            
-#            if Re == 50 or Re == 100:
-#                every = 15
-#            if Re == 200:
-#                every = 21
-            
-            every = 4
-                
-            coarse_orbit   = sep    [::every]
-            coarse_normals = normals[::every]
-            coarse_rotations = w[::every]
-            
-            corrected_rotations =  np.vstack( (omegay.predict( np.atleast_2d(coarse_orbit) ),
-                                               omegaz.predict( np.atleast_2d(coarse_orbit) )) ).T
-            
-            corrected_rotations -= np.sum(np.multiply(coarse_normals, corrected_rotations), axis=1)[:, np.newaxis] * coarse_normals #coarse_rotations[:, np.newaxis]*coarse_normals
-            corrected_rotations *= 0.0
-#            fig=plt.figure()
-#            plt.plot(sep[:,0], sep[:,1])
-#            plt.quiver(coarse_orbit[:,0], coarse_orbit[:,1], corrected_rotations[:,0], corrected_rotations[:,1])
-#            plt.axes().set_aspect('equal', 'datalim')
-#            plt.show()
-            
-        
-            h = 0.02
-            refname = root_scratch1600 + '/newcode/' + 'test_0rotations__' + str(int(Re)) + '_' + str(int(rot)) + '.txt'
-            print('Saving refinement data to ' + refname)
-            f = open(refname, 'w')
-            
-            for c,r  in zip(coarse_orbit, corrected_rotations):
-                f.write('%f  %f    %f  %f\n' % (c[0], c[1], r[0]*u/H, r[1]*u/H))
-                    
-#            for p in np.linspace(-h, h, 4):
-#                coo = coarse_orbit + coarse_normals*p
-#                plt.scatter( coo[:,0], coo[:,1], color='black' )
-#                
-#                for c in coo:
-#                    f.write('%f  %f\n' % (c[0], c[1]))
-            
-            f.close()
-    
-        #fig.savefig('/home/alexeedm/udevicex/media/square/' + 'refine__' + fname + '.pdf', bbox_inches='tight')
-        #plt.close(fig)
-        #plt.show()
+
     
                 
 

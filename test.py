@@ -82,7 +82,7 @@ def read_cache(func, folder, fname, override_cache=False):
 scratch1600 = '/home/alexeedm/extern/daint/scratch1600/focusing_square_rigid_massive/newcode/'
 Re = 100
 Res = str(int(Re))
-data = read_cache( lambda : read_data(scratch1600 + 'case___Re_' + Res + '*/', 'pinning_force'), 'data/focusing/', 'modrotation'+Res, True)
+data = read_cache( lambda : read_data(scratch1600 + 'case___Re_' + Res + '*/', 'pinning_force'), 'data/focusing/', 'modrotation'+Res, False)
 
 fig = plt.figure()
 plt.quiver(data[:,0], data[:,1], data[:,4], data[:,6])

@@ -6,6 +6,8 @@ import h5py
 import math
 import scipy
 from scipy import interpolate
+from scipy import integrate
+from scipy import optimize
 
 import matplotlib.pyplot as plt
 	
@@ -70,7 +72,7 @@ def hiemenz_profile(fname, hbin, maxDistU, maxDistV, stagPoint2, h2):
 	#print u
 	#print v
 			
-	return u, v
+	return -u, -v
 
 def derivatives(y, t):
 	return [y[1], y[2],  -y[0]*y[2] + y[1]*y[1] - 1]
@@ -89,7 +91,7 @@ def solve_const_a(a):
 def F_Fprime(t):
 	bc = scipy.optimize.root(solve_const_a, 1.23)
 	
-	print "Boundary value: ", bc.x
+	print("Boundary value: ", bc.x)
 	y0 = ic(bc.x)
 
 	return scipy.integrate.odeint(derivatives, y0, t)
@@ -134,7 +136,7 @@ def fit_uv(u, v, h):
 	
 	res = scipy.optimize.minimize(l2norm, [0.1])
 
-	print res.x
+	print(res.x)
 	
 	k = res.x[0]
 	eta = math.sqrt(k / nu)
@@ -183,18 +185,18 @@ def dump_plots(u, v, h,   k, nu, eta):
 #    plt.close(fig)
 
 def main():
-	maxDistU = 5.0
-	maxDistV = 8.0
+	maxDistU = 6.0
+	maxDistV = 6.0
 	h = 0.5
 	
 	#fname = sys.argv[1]
-	fname = "/home/alexeedm/extern/daint/scratch/hiemenz/2drun_0.05/xdmf/all.h5"
+	fname = "/home/alexeedm/extern/daint/project/hiemenz/2d_big_run_0.05/xdmf/avg_rho_u00004.h5"
 	
-	u, v = hiemenz_profile(fname, h, maxDistU, maxDistV, [32, 52], [0.5, 0.5])
+	u, v = hiemenz_profile(fname, h, maxDistU, maxDistV, [64, 60], [0.5, 0.5])
 	
 	k, nu, eta = fit_uv(u, v, h)
 	
-	print k, "  ", nu, "  ", eta
+	print(k, "  ", nu, "  ", eta)
 		
 	dump_plots(u, v, h,   k, nu, eta)
 
